@@ -274,6 +274,8 @@ void distCallback(const std_msgs::Float32::ConstPtr& msg)
 			}
 		}*/
 		int mindex = binarySearch(mapDistances, 0, numMaps-1, distanceT);
+		ROS_INFO("processing frame %i \n", mindex);
+
 
 		//and publish it
 		if (mindex > -1 && mindex != lastLoadedMap){
