@@ -1,4 +1,29 @@
-# STRoLL BearNav 
+# STRoLL BearNav
+
+## HSR Simulation Launch
+
+roslaunch hsrb_wrs_gazebo_launch-master kevin.launch
+
+## Run Deep Learning Stuff in Docker
+
+## Run the docker container
+docker run -it --network=host --gpus all --rm -v /home/kevin/tmp_ws:/home/tmp_ws sha256:5fc203c5dfa7a6329c985d73ca19b485ef5446e4e19ac5a4fce8aa28c6a5f018
+
+### Instll Pytorch
+pip3 install torch==1.5.0+cu101 torchvision==0.6.0+cu101 -f https://download.pytorch.org/whl/torch_stable.html
+
+### Build the workspace
+cd /home/tmp_ws && catkin_make && source devel/setup.bash
+
+### Run the feature matching node
+cd src/TRN_server/scripts
+python KeyPointMatching_server.py
+
+### Troubleshoot
+[ERROR] docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]].
+sudo apt-get install nvidia-container-toolkit
+
+ 
 ## Simple and Robust Visual Teach-and-replay Navigation System
 
 ### Authors: Filip Majer, Lucie Halodová, Tomáš Vintr and Tomáš Krajník

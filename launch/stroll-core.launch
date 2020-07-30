@@ -27,7 +27,7 @@
 </node>
 
 <!-- navigator node -->
-<node pkg="stroll_bearnav" type="navigator_node" name="navigator" output="screen">
+<node pkg="stroll_bearnav" type="end2end_navigator_node" name="navigator" output="screen">
   <param name="folder" value="$(arg folder)" />
 </node>
 
