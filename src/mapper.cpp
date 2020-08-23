@@ -57,7 +57,11 @@ vector<string> idQueue;
 Mat descriptors;
 Mat descriptor;
 vector<KeyPoint> keypoints;
-vector<float> path;
+vector<float> path_dist;
+vector<float> path_forward_vel;
+vector<float> path_angular_vel;
+vector<float> path_flip_vel;
+
 KeyPoint keypoint;
 float rating;
 vector<float> ratings;
@@ -78,7 +82,8 @@ int pauseButton = 0;
 int linearAxis = 1;
 int angularAxis = 0;
 int flipperAxis = 4;
-
+int accelButton = 6; // in the acceleration mode,  the robot will apply the 2x max angular velocity
+int accelMaxButton = 7; // in the acceleration Max mode, the robot will ignore the linear velocity (for rotation within origin)
 /*these constants determine how quickly the robot moves based on the joystick input*/ 
 double maxForwardSpeed = 0.2;
 double maxAngularSpeed = 0.2;
@@ -181,7 +186,10 @@ void executeCB(const stroll_bearnav::mapperGoalConstPtr &goal, Server *serv)
 	srv.request.distance = distanceTravelled = distanceTotalEvent = 0;
 	userStop = false;
 	baseName = goal->fileName;
-	path.clear();
+	path_dist.clear();
+	path_forward_vel.clear();
+	path_angular_vel.clear();
+	path_flip_vel.clear();
 	state = PREPARING;
 	if (isPlastic) state = SAVING;
 	//TODO if plastic, listen to navigator and then terminate mapping
@@ -221,7 +229,11 @@ void executeCB(const stroll_bearnav::mapperGoalConstPtr &goal, Server *serv)
 			sprintf(name,"%s/%s.yaml",folder.c_str(),baseName.c_str());
 			ROS_INFO("Saving path profile to %s",name);
 			FileStorage pfs(name,FileStorage::WRITE);
-			write(pfs, "Path", path);
+			write(pfs, "distance", path_dist);
+			write(pfs, "forward_vel", path_forward_vel);
+			write(pfs, "angular_vel", path_angular_vel);
+			write(pfs, "flip_vel", path_flip_vel);
+
 			pfs.release();
 			if (server->isPreemptRequested()) server->setPreempted(result); else  server->setSucceeded(result);
 			userStop = false;
@@ -243,8 +255,10 @@ void joyCallback(const sensor_msgs::Joy::ConstPtr& joy)
 	angularSpeed = maxAngularSpeed*forwardSpeed*0.5*joy->axes[angularAxis];
 	forwardAcceleration = maxForwardAcceleration*joy->axes[linearAxis];;
 	flipperSpeed = maxFlipperSpeed*joy->axes[flipperAxis];
-	if  (joy->buttons[stopButton] || joy->buttons[pauseButton]) angularSpeed = forwardSpeed = flipperSpeed = 0;
-	if  (joy->buttons[stopButton]) userStop = true;
+    if(joy->buttons[accelButton])   angularSpeed *= 2;
+	if(joy->buttons[accelMaxButton])   angularSpeed = maxAngularSpeed*joy->axes[angularAxis];
+	if(joy->buttons[stopButton] || joy->buttons[pauseButton]) angularSpeed = forwardSpeed = flipperSpeed = 0;
+	if(joy->buttons[stopButton]) userStop = true;
 	ROS_DEBUG("Joystick pressed");
 } 
 
@@ -261,8 +275,8 @@ void featureCallback(const stroll_bearnav::FeatureArray::ConstPtr& msg)
         if (state == SAVING) {
             keypoints.clear();
             descriptors.release();
-	    ratings.clear();
-	    img.release();
+		    ratings.clear();
+		    img.release();
 
             for (int i = 0; i < msg->feature.size(); i++) {
 
@@ -282,7 +296,7 @@ void featureCallback(const stroll_bearnav::FeatureArray::ConstPtr& msg)
             }
 
             /*store in memory rather than on disk*/
-	    imageSelect(msg->id.c_str());
+	    	imageSelect(msg->id.c_str());
             imagesMap.push_back(img);
 	  
             keypointsMap.push_back(keypoints);
@@ -397,7 +411,13 @@ int main(int argc, char** argv)
 	/* Initiate service */
 	client = nh.serviceClient<stroll_bearnav::SetDistance>("/setDistance");
 
-	path.clear();
+	path_dist.clear();
+	path_forward_vel.clear();
+	path_angular_vel.clear();
+	path_flip_vel.clear();
+	int event_count = 0;
+	ros::Time lastEventTime = ros::Time::now();
+
 	while (ros::ok()){
 		if (state == MAPPING)
 		{   /* speed limits */
@@ -411,12 +431,18 @@ int main(int argc, char** argv)
 			if (isPlastic == false) vel_pub_.publish(twist);
 
 			/* saving path profile */
-			if (lastForwardSpeed != forwardSpeed || lastAngularSpeed != angularSpeed || lastFlipperSpeed != flipperSpeed)
+			if (lastForwardSpeed != forwardSpeed || lastAngularSpeed != angularSpeed || lastFlipperSpeed != flipperSpeed || (angularSpeed!=0 & ros::Time::now()>lastEventTime+ros::Duration(0.1)))
 			{
-				path.push_back(distanceTravelled);
-				path.push_back(forwardSpeed);
-				path.push_back(angularSpeed);
-				path.push_back(flipperSpeed);
+				if(angularSpeed!=0 & ros::Time::now()>lastEventTime+ros::Duration(0.1))
+					ROS_WARN("Robot is turing.");
+
+				path_dist.push_back(distanceTravelled);
+				path_forward_vel.push_back(forwardSpeed);
+				path_angular_vel.push_back(angularSpeed);
+				path_flip_vel.push_back(flipperSpeed);
+				event_count++;
+				ROS_INFO("Event %i is record.", event_count);
+				lastEventTime = ros::Time::now();
 				//printf("%.3f %.3f %.3f %.3f\n",distanceTravelled,forwardSpeed,angularSpeed,flipperSpeed);
 			}
 			lastForwardSpeed = forwardSpeed;
