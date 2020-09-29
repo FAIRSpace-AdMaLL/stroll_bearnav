@@ -275,7 +275,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         // call feature maching service
         if (client2.call(srv))
         {
-            //ROS_INFO("Flag is: %ld", (long int)srv.response.flag);
+            ROS_INFO("Flag is: %ld", (long int)srv.response.flag);
         }
         else
         {
@@ -301,11 +301,16 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         best_matches.clear();
         bad_matches.clear();
 
-        for(int i=0; i<srv.response.histogram.size(); i++)
-            histogram[i] = int(srv.response.histogram[i]);
-
         for(int i=0; i<srv.response.differences.size(); i++)
             differences[i] = int(srv.response.differences[i]);
+
+        /*building histogram*/
+        for (int i=0;i<num;i++){
+
+            int index = (differences[i]+granularity/2)/granularity + numBins/2;
+
+            if (index >= 0 && index < numBins) histogram[index]++;
+        }
 
         /*histogram printing*/
         int max=0;
@@ -355,7 +360,16 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         feedback.matches = num;
         /*difference between features */
         differenceRot=sum/count;
-        cout << "correct: " << feedback.correct << " out: " << feedback.outliers << " map " << mapKeypoints.size() << " cur " << currentKeypoints.size() << " gm " << feedback.matches << " difference " << differenceRot  << " distance " << feedback.distance << endl;
+        ROS_WARN("steering now");
+        if(count==0) {
+        	ROS_ERROR("count is zero!");
+        	for(int i=0;i<num;i++)	cout << differences[i];
+        	cout << endl;
+        	cout << "rotation " <<rotation << endl;
+        }
+
+        cout << "sum " << sum << " count " << count << endl; 
+        cout << "correct: " << feedback.correct << " outliners: " << feedback.outliers << " map keypoint size " << mapKeypoints.size() << " current keypoint size " << currentKeypoints.size() << " good mathes " << feedback.matches << " difference " << differenceRot  << " distance " << feedback.distance << endl;
         //cout << "Vektor: " << count << " " << differenceRot << endl;
         //cout << "bm " << bad_matches.size()  << endl;
 
