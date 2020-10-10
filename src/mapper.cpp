@@ -435,15 +435,16 @@ int main(int argc, char** argv)
 			{
 				if(angularSpeed!=0 & ros::Time::now()>lastEventTime+ros::Duration(0.1))
 					ROS_WARN("Robot is turing.");
-
-				path_dist.push_back(distanceTravelled);
-				path_forward_vel.push_back(forwardSpeed);
-				path_angular_vel.push_back(angularSpeed);
-				path_flip_vel.push_back(flipperSpeed);
-				event_count++;
-				ROS_INFO("Event %i is record.", event_count);
-				lastEventTime = ros::Time::now();
-				//printf("%.3f %.3f %.3f %.3f\n",distanceTravelled,forwardSpeed,angularSpeed,flipperSpeed);
+				if(fabs(forwardSpeed)>0.01) {
+					path_dist.push_back(distanceTravelled);
+					path_forward_vel.push_back(forwardSpeed);
+					path_angular_vel.push_back(angularSpeed);
+					path_flip_vel.push_back(flipperSpeed);
+					event_count++;
+					ROS_INFO("Event %i is record.", event_count);
+					lastEventTime = ros::Time::now();
+					//printf("%.3f %.3f %.3f %.3f\n",distanceTravelled,forwardSpeed,angularSpeed,flipperSpeed);
+				}
 			}
 			lastForwardSpeed = forwardSpeed;
 			lastAngularSpeed = angularSpeed;
