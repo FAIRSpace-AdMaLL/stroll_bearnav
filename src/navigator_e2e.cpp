@@ -50,7 +50,8 @@ image_transport::Subscriber image_map_sub_;
 image_transport::Publisher image_pub_;
 
 /* Service for set/reset distance */
-stroll_bearnav::SetDistance srv;
+stroll_bearnav::SetDistance setdist_srv;
+TRN_server::KeyPointMatching keypoint_srv;
 ros::ServiceClient client, client2;
 
 /* Action server */
@@ -88,6 +89,11 @@ float maximalCurvature = 1.0;
 bool imgShow;
 NormTypes featureNorm = NORM_INF;
 int descriptorType = CV_32FC1;
+
+/*Scale estimation*/
+bool correct_odometry=false;
+float odometry_offset=0;
+
 
 /* Feature message */
 stroll_bearnav::FeatureArray featureArray;
@@ -190,8 +196,8 @@ void actionServerCB(const stroll_bearnav::navigatorGoalConstPtr &goal, Server *s
 	differenceRotInt = 0;
 
 	/* reset distance using service*/
-	srv.request.distance=overshoot=0;
-	if (!client.call(srv)) ROS_ERROR("Failed to call service SetDistance provided by odometry_monitor node!");
+	setdist_srv.request.distance=overshoot=0;
+	if (!client.call(setdist_srv)) ROS_ERROR("Failed to call service SetDistance provided by odometry_monitor node!");
 	result.success = false;
 	while(state != IDLE){
 		if(server->isPreemptRequested()){
@@ -207,8 +213,8 @@ void actionServerCB(const stroll_bearnav::navigatorGoalConstPtr &goal, Server *s
 				server->setSucceeded(result);
 			}else{
 				sleep(2);
-				srv.request.distance=overshoot;
-				if (!client.call(srv)) ROS_ERROR("Failed to call service SetDistance provided by odometry_monitor node!");
+				setdist_srv.request.distance=overshoot;
+				if (!client.call(setdist_srv)) ROS_ERROR("Failed to call service SetDistance provided by odometry_monitor node!");
 				sleep(2);
 				currentPathElement = 0;
 				state = NAVIGATING;
@@ -258,31 +264,30 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         currentDescriptors = Mat();
         good_matches.clear();
 
-        TRN_server::KeyPointMatching srv;
 
         cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
 
         cvtColor(cv_ptr->image, currentImage, cv::COLOR_BGR2GRAY);
 
-        srv.request.gray_image2 = *(cv_bridge::CvImage(std_msgs::Header(), "mono8", currentImage).toImageMsg());
+        keypoint_srv.request.gray_image2 = *(cv_bridge::CvImage(std_msgs::Header(), "mono8", currentImage).toImageMsg());
 
         //imwrite( "/home/kevin/currentImage"+to_string(time)+".jpg", currentImage);
         
-        srv.request.gray_image1 = *(cv_bridge::CvImage(std_msgs::Header(), "mono8", mapImage).toImageMsg());
+        keypoint_srv.request.gray_image1 = *(cv_bridge::CvImage(std_msgs::Header(), "mono8", mapImage).toImageMsg());
 
         //imwrite( "/home/kevin/mapImage" + to_string(time) + ".jpg", mapImage);
 
         // call feature maching service
-        if (client2.call(srv))
+        if (client2.call(keypoint_srv))
         {
-            ROS_INFO("Flag is: %ld", (long int)srv.response.flag);
+            ROS_INFO("Flag is: %ld", (long int)keypoint_srv.response.flag);
         }
         else
         {
             ROS_ERROR("Failed to call service to match two images.");
             return;
         }
-        if(srv.response.flag < 0) {
+        if(keypoint_srv.response.flag < 0) {
             differenceRot = 0;
             ROS_WARN("No matched features.");
             return;
@@ -293,7 +298,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         int numBins = 41;
         int granularity = 20;
         int count = 0;
-        int num = srv.response.differences.size();
+        int num = keypoint_srv.response.differences.size();
         int *differences = (int*)calloc(num,sizeof(int));
         int histogram[numBins];
         for (int i = 0;i<numBins;i++) histogram[i] = 0;
@@ -301,8 +306,8 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         best_matches.clear();
         bad_matches.clear();
 
-        for(int i=0; i<srv.response.differences.size(); i++)
-            differences[i] = int(srv.response.differences[i]);
+        for(int i=0; i<keypoint_srv.response.differences.size(); i++)
+            differences[i] = int(keypoint_srv.response.differences[i]);
 
         /*building histogram*/
         for (int i=0;i<num;i++){
@@ -353,6 +358,16 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         }
         free(differences);
 
+        /* odometry correction */
+        if(correct_odometry) {
+            double deltaZ = keypoint_srv.response.translation[2];
+            if(abs(deltaZ)<0.02)    odometry_offset=0;
+            else    odometry_offset = 0.9*odometry_offset+0.1*fmax(fmin(deltaZ, 0.2), -0.2);
+
+            setdist_srv.request.distance=fmax(0.0, currentDistance + odometry_offset);
+            if (!client.call(setdist_srv)) ROS_ERROR("Failed to call service SetDistance provided by odometry_monitor node!");
+            else ROS_WARN("Correcting odometry now - %6f!", odometry_offset);
+        }
         /* publish statistics */
         feedback.correct = num_inliners;
         feedback.outliers = num_outliners;
@@ -556,6 +571,8 @@ int main(int argc, char** argv)
 
 	ros::NodeHandle nh;
 	image_transport::ImageTransport it_(nh);
+    ros::param::get("~correct_odometry", correct_odometry);
+
 	image_sub_ = it_.subscribe( "/image_with_features", 1,imageCallback);
 	image_map_sub_ = it_.subscribe( "/map_image", 1,imageMapCallback);
 	cmd_pub_ = nh.advertise<geometry_msgs::Twist>("cmd",1);
