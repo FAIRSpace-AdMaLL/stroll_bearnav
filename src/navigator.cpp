@@ -1,6 +1,6 @@
 #include <ros/ros.h>
+#include <tf/tf.h>
 #include <image_transport/image_transport.h>
-#include <geometry_msgs/Twist.h>
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/image_encodings.h>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -9,6 +9,8 @@
 #include <iostream>
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/Twist.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Pose2D.h>
 #include <stroll_bearnav/FeatureArray.h>
 #include <stroll_bearnav/Feature.h>
 #include <stroll_bearnav/PathProfile.h>
@@ -43,6 +45,7 @@ ros::Subscriber loadFeatureSub_;
 ros::Subscriber speedSub_;
 ros::Subscriber distSub_;
 ros::Subscriber distEventSub_;
+ros::Subscriber globalPoseSub_;
 image_transport::Subscriber image_sub_;
 image_transport::Subscriber image_map_sub_;
 image_transport::Publisher image_pub_;
@@ -90,6 +93,15 @@ int descriptorType = CV_32FC1;
 /* Feature message */
 stroll_bearnav::FeatureArray featureArray;
 stroll_bearnav::Feature feature;
+
+/*Testing Log*/
+bool write_log=true;
+string folder;
+std::vector<float> log_distances;
+std::vector<float> log_offsets;
+std::vector<int> log_num_inliners;
+geometry_msgs::Pose2D curr_pose;
+std::vector<float> log_global_pose;
  
 typedef struct
 {
@@ -112,6 +124,7 @@ vector<SPathElement> path;
 float overshoot = 0;
 double velocityGain=0;
 int maxVerticalDifference = 0;
+
 
 /* Map features ratings parameters */
 bool isRating = false;
@@ -216,6 +229,39 @@ void actionServerCB(const stroll_bearnav::navigatorGoalConstPtr &goal, Server *s
 	}
 	twist.linear.x = twist.linear.y = twist.linear.z = twist.angular.z = twist.angular.y = twist.angular.x = 0.0;	
 	cmd_pub_.publish(twist);
+}
+
+
+void writeLog() {
+    /*save the path profile as well*/
+    ROS_INFO("saving log...");
+    char name[100];
+    sprintf(name,"%s/log_%f.yaml", folder.c_str(), ros::Time::now().toSec());
+    ROS_INFO("saving test log to %s",name);
+    FileStorage pfs(name,FileStorage::WRITE);
+    write(pfs, "distance", log_distances);
+    write(pfs, "offset", log_offsets);
+    write(pfs, "num_inliners", log_num_inliners);
+    write(pfs, "global_pose", log_global_pose);
+    pfs.release();
+    ROS_INFO("done!");
+}
+
+/*get Global pose*/
+void globalPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) 
+{
+	tf::Quaternion qua(
+        msg->pose.orientation.x,
+        msg->pose.orientation.y,
+        msg->pose.orientation.z,
+        msg->pose.orientation.w);
+    tf::Matrix3x3 mat(qua);
+    double roll, pitch, yaw;
+    mat.getRPY(roll, pitch, yaw);
+	
+	curr_pose.x = msg->pose.position.x;
+	curr_pose.y = msg->pose.position.y;
+	curr_pose.theta = yaw;
 }
 
 /* get image from camera */
@@ -327,6 +373,8 @@ void featureCallback(const stroll_bearnav::FeatureArray::ConstPtr& msg)
 		info.updated=false;
 		info.view = *msg;
 		matches.clear();
+		int num_inliners = 0;
+		
 		if (mapKeypoints.size() >0 && currentKeypoints.size() >0){
 
 			/*feature matching*/
@@ -422,6 +470,7 @@ void featureCallback(const stroll_bearnav::FeatureArray::ConstPtr& msg)
 			/* use good correspondences to determine heading */
 			best_matches.clear();
 			bad_matches.clear();
+			
 			/* take only good correspondences */
 			for(int i=0;i<num;i++){
 				if (fabs(differences[i]-rotation) < granularity*1.5){
@@ -429,6 +478,7 @@ void featureCallback(const stroll_bearnav::FeatureArray::ConstPtr& msg)
 					count++;
 					best_matches.push_back(good_matches[i]);
 					keypointsBest.push_back(keypointsGood[i]);
+					num_inliners++;
 				} else {
 					bad_matches.push_back(good_matches[i]);
 				}
@@ -453,6 +503,17 @@ void featureCallback(const stroll_bearnav::FeatureArray::ConstPtr& msg)
 		feedback.histogram.clear();
 		if (count<minGoodFeatures) differenceRot = 0;
 		for (int i = 0;i<numBins;i++) feedback.histogram.push_back(histogram[i]);
+
+		//Output the log
+		if(write_log) {
+		    log_distances.push_back(currentDistance);
+		    log_offsets.push_back(differenceRot);
+		    log_num_inliners.push_back(num_inliners);
+		    log_global_pose.push_back(curr_pose.x);
+		    log_global_pose.push_back(curr_pose.y);
+		    log_global_pose.push_back(curr_pose.theta);
+		    ROS_INFO("curr pose: %f, %f, %f",  curr_pose.x, curr_pose.y, curr_pose.theta); 
+		}
 
 		/*forming navigation info messsage*/
 		//info.mapID = currentMapID;
@@ -610,11 +671,17 @@ void distanceCallback(const std_msgs::Float32::ConstPtr& msg)
 			cmd_pub_.publish(twist);
 		}
 	}
+
 	if (state == COMPLETED){
 		if (path.size() > 0) overshoot = msg->data-path[path.size()-1].distance;
 		twist.linear.x = twist.linear.y = twist.linear.z = 0.0;
 		twist.angular.z = twist.angular.y = twist.angular.x = 0.0;
 		cmd_pub_.publish(twist);
+
+		if(write_log) {
+            writeLog();
+            write_log = false;
+        }
 	}
 }
 
@@ -623,6 +690,10 @@ int main(int argc, char** argv)
 	ros::init(argc, argv, "navigator");
 
 	ros::NodeHandle nh;
+
+	ros::param::get("~write_log", write_log);
+	ros::param::get("~folder", folder);
+
 	image_transport::ImageTransport it_(nh);
 	image_sub_ = it_.subscribe( "/image_with_features", 1,imageCallback);
 	image_map_sub_ = it_.subscribe( "/map_image", 1,imageMapCallback);
@@ -635,6 +706,8 @@ int main(int argc, char** argv)
 	distSub_=nh.subscribe<std_msgs::Float32>("/distance",1,distanceCallback);
     distEventSub_=nh.subscribe<std_msgs::Float32>("/distance_events",1,distanceEventCallback);
 	speedSub_=nh.subscribe<stroll_bearnav::PathProfile>("/pathProfile",1,pathCallback);
+
+	globalPoseSub_=nh.subscribe<geometry_msgs::PoseStamped>("/global_pose",1,globalPoseCallback); 
   	/* Initiate action server */
 	server = new Server (nh, "navigator", boost::bind(&actionServerCB, _1, server), false);
 	server->start();

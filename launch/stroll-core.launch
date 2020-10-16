@@ -30,7 +30,8 @@
 <!-- navigator node -->
 <node pkg="stroll_bearnav" type="end2end_navigator_node" name="navigator" output="screen">
   <param name="folder" value="$(arg folder)" />
-  <param name="correct_odometry" type="bool" value="false" />
+  <param name="correct_odometry" type="bool" value="true" />
+  <param name="write_log" type="bool" value="true"/>
 </node>
 
 </launch>

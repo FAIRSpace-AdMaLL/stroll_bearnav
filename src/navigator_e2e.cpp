@@ -1,22 +1,26 @@
 #include <ros/ros.h>
-#include <image_transport/image_transport.h>
-#include <geometry_msgs/Twist.h>
-#include <cv_bridge/cv_bridge.h>
-#include <sensor_msgs/image_encodings.h>
-#include <opencv2/imgproc/imgproc.hpp>
-#include <opencv2/highgui/highgui.hpp>
+#include <tf/tf.h>
 #include <stdio.h>
 #include <iostream>
+
+#include <std_msgs/Float32.h>
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/Twist.h>
-#include <stroll_bearnav/FeatureArray.h>
-#include <stroll_bearnav/Feature.h>
-#include <stroll_bearnav/PathProfile.h>
-#include <cmath>
-#include <std_msgs/Float32.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Pose2D.h>
+#include <image_transport/image_transport.h>
+#include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/image_encodings.h>
+
 #include <opencv2/opencv.hpp>
 #include <opencv2/xfeatures2d.hpp>
 #include <opencv2/features2d.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/highgui/highgui.hpp>
+
+#include <stroll_bearnav/FeatureArray.h>
+#include <stroll_bearnav/Feature.h>
+#include <stroll_bearnav/PathProfile.h>
 #include <stroll_bearnav/navigatorAction.h>
 #include <stroll_bearnav/SetDistance.h>
 #include <actionlib/server/simple_action_server.h>
@@ -24,6 +28,8 @@
 #include <stroll_bearnav/navigatorConfig.h>
 #include <stroll_bearnav/NavigationInfo.h>
 #include <TRN_server/KeyPointMatching.h>
+
+#include <cmath>
 
 using namespace cv;
 using namespace cv::xfeatures2d;
@@ -45,6 +51,7 @@ ros::Subscriber loadFeatureSub_;
 ros::Subscriber speedSub_;
 ros::Subscriber distSub_;
 ros::Subscriber distEventSub_;
+ros::Subscriber globalPoseSub_;
 image_transport::Subscriber image_sub_;
 image_transport::Subscriber image_map_sub_;
 image_transport::Publisher image_pub_;
@@ -93,6 +100,15 @@ int descriptorType = CV_32FC1;
 /*Scale estimation*/
 bool correct_odometry=false;
 float odometry_offset=0;
+
+/*Testing Log*/
+bool write_log=true;
+string folder;
+std::vector<float> log_distances;
+std::vector<float> log_offsets;
+std::vector<int> log_num_inliners;
+geometry_msgs::Pose2D curr_pose;
+std::vector<float> log_global_pose;
 
 
 /* Feature message */
@@ -186,6 +202,38 @@ void loadFeatureCallback(const stroll_bearnav::FeatureArray::ConstPtr& msg)
 		if (descriptorType != CV_32FC1) mat.convertTo(mat,descriptorType);
 		mapDescriptors.push_back(mat);
 	}
+}
+
+void writeLog() {
+    /*save the path profile as well*/
+    ROS_INFO("saving log...");
+    char name[100];
+    sprintf(name,"%s/log_%f.yaml", folder.c_str(), ros::Time::now().toSec());
+    ROS_INFO("saving test log to %s",name);
+    FileStorage pfs(name,FileStorage::WRITE);
+    write(pfs, "distance", log_distances);
+    write(pfs, "offset", log_offsets);
+    write(pfs, "num_inliners", log_num_inliners);
+    write(pfs, "global_pose", log_global_pose);
+    pfs.release();
+    ROS_INFO("done!");
+}
+
+/*get Global pose*/
+void globalPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) 
+{
+    tf::Quaternion qua(
+        msg->pose.orientation.x,
+        msg->pose.orientation.y,
+        msg->pose.orientation.z,
+        msg->pose.orientation.w);
+    tf::Matrix3x3 mat(qua);
+    double roll, pitch, yaw;
+    mat.getRPY(roll, pitch, yaw);
+    
+    curr_pose.x = msg->pose.position.x;
+    curr_pose.y = msg->pose.position.y;
+    curr_pose.theta = yaw;
 }
 
 void actionServerCB(const stroll_bearnav::navigatorGoalConstPtr &goal, Server *serv)
@@ -394,6 +442,18 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         if (count<minGoodFeatures) differenceRot = 0;
         for (int i = 0;i<numBins;i++) feedback.histogram.push_back(histogram[i]);
 
+
+        //Output the log
+        if(write_log) {
+            log_distances.push_back(currentDistance);
+            log_offsets.push_back(differenceRot);
+            log_num_inliners.push_back(num_inliners);
+            log_global_pose.push_back(curr_pose.x);
+            log_global_pose.push_back(curr_pose.y);
+            log_global_pose.push_back(curr_pose.theta);
+            ROS_INFO("curr pose: %f, %f, %f",  curr_pose.x, curr_pose.y, curr_pose.theta); 
+        }
+
         /*forming navigation info messsage*/
         //info.mapID = currentMapID;
         info.histogram = feedback.histogram;
@@ -557,11 +617,17 @@ void distanceCallback(const std_msgs::Float32::ConstPtr& msg)
 			cmd_pub_.publish(twist);
 		}
 	}
+
 	if (state == COMPLETED){
 		if (path.size() > 0) overshoot = msg->data-path[path.size()-1].distance;
 		twist.linear.x = twist.linear.y = twist.linear.z = 0.0;
 		twist.angular.z = twist.angular.y = twist.angular.x = 0.0;
 		cmd_pub_.publish(twist);
+
+        if(write_log) {
+            writeLog();
+            write_log = false;
+        }
 	}
 }
 
@@ -570,7 +636,10 @@ int main(int argc, char** argv)
 	ros::init(argc, argv, "navigator");
 
 	ros::NodeHandle nh;
-	image_transport::ImageTransport it_(nh);
+    image_transport::ImageTransport it_(nh);
+
+    ros::param::get("~write_log", write_log);
+    ros::param::get("~folder", folder);
     ros::param::get("~correct_odometry", correct_odometry);
 
 	image_sub_ = it_.subscribe( "/image_with_features", 1,imageCallback);
@@ -584,6 +653,8 @@ int main(int argc, char** argv)
 	distSub_=nh.subscribe<std_msgs::Float32>("/distance",1,distanceCallback);
     distEventSub_=nh.subscribe<std_msgs::Float32>("/distance_events",1,distanceEventCallback);
 	speedSub_=nh.subscribe<stroll_bearnav::PathProfile>("/pathProfile",1,pathCallback);
+
+    globalPoseSub_=nh.subscribe<geometry_msgs::PoseStamped>("/global_pose",1,globalPoseCallback); 
   	/* Initiate action server */
 	server = new Server (nh, "navigator", boost::bind(&actionServerCB, _1, server), false);
 	server->start();

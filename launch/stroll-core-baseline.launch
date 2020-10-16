@@ -30,6 +30,7 @@
 <!-- navigator node -->
 <node pkg="stroll_bearnav" type="navigator_node" name="navigator" output="screen">
   <param name="folder" value="$(arg folder)" />
+  <param name="write_log" type="bool" value="true"/>
 </node>
 
 </launch>
