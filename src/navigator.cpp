@@ -15,6 +15,7 @@
 #include <stroll_bearnav/Feature.h>
 #include <stroll_bearnav/PathProfile.h>
 #include <cmath>
+#include <std_msgs/String.h>
 #include <std_msgs/Float32.h>
 #include <opencv2/opencv.hpp>
 #include <opencv2/xfeatures2d.hpp>
@@ -44,6 +45,7 @@ ros::Subscriber featureSub_;
 ros::Subscriber loadFeatureSub_;
 ros::Subscriber speedSub_;
 ros::Subscriber distSub_;
+ros::Subscriber saverSub_;
 ros::Subscriber distEventSub_;
 ros::Subscriber globalPoseSub_;
 image_transport::Subscriber image_sub_;
@@ -232,11 +234,11 @@ void actionServerCB(const stroll_bearnav::navigatorGoalConstPtr &goal, Server *s
 }
 
 
-void writeLog() {
+void writeLog(std_msgs::String msg) {
     /*save the path profile as well*/
     ROS_INFO("saving log...");
     char name[100];
-    sprintf(name,"%s/log_%f.yaml", folder.c_str(), ros::Time::now().toSec());
+    sprintf(name,"%s/log_%s.yaml", folder.c_str(), msg.data.c_str());
     ROS_INFO("saving test log to %s",name);
     FileStorage pfs(name,FileStorage::WRITE);
     write(pfs, "distance", log_distances);
@@ -678,10 +680,6 @@ void distanceCallback(const std_msgs::Float32::ConstPtr& msg)
 		twist.angular.z = twist.angular.y = twist.angular.x = 0.0;
 		cmd_pub_.publish(twist);
 
-		if(write_log) {
-            writeLog();
-            write_log = false;
-        }
 	}
 }
 
@@ -706,6 +704,7 @@ int main(int argc, char** argv)
 	distSub_=nh.subscribe<std_msgs::Float32>("/distance",1,distanceCallback);
     distEventSub_=nh.subscribe<std_msgs::Float32>("/distance_events",1,distanceEventCallback);
 	speedSub_=nh.subscribe<stroll_bearnav::PathProfile>("/pathProfile",1,pathCallback);
+	saverSub_=nh.subscribe<std_msgs::String>("log_saver",1,writeLog);
 
 	globalPoseSub_=nh.subscribe<geometry_msgs::PoseStamped>("/global_pose",1,globalPoseCallback); 
   	/* Initiate action server */

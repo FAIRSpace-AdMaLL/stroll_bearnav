@@ -1,0 +1,37 @@
+<launch>
+
+<!-- Default folder with maps-->
+
+<arg name="folder" default="/home/kevin/hsr"/>
+
+<!-- Distance Measurement Node -->
+  <node pkg="stroll_bearnav" type="odometry_monitor_node" name="odometry_monitor">
+  <remap from="/odom" to="/hsrb/odom"/>
+  </node>
+
+<!-- feature extraction -->
+  <node pkg="stroll_bearnav" type="feature_extraction_node" name="feature_extraction">
+  <remap from="image" to="/hsrb/head_rgbd_sensor/rgb/image_rect_color"/>
+  </node>
+
+<!-- mapping node -->
+<node pkg="stroll_bearnav" type="mapper_node" name="mapper" output="screen">
+  <remap from="image" to="/hsrb/head_rgbd_sensor/rgb/image_rect_color"/>
+  <param name="folder" value="$(arg folder)" />
+  <param name="angularSpeed" value="9" />
+</node>
+
+<!-- map loader node -->
+<node pkg="stroll_bearnav" type="map_preprocessor_node" name="map_preprocessor">
+<param name="folder" value="$(arg folder)" />
+<param name="image_only" value="true" />
+</node>
+
+<!-- navigator node -->
+<node pkg="stroll_bearnav" type="end2end_navigator_node" name="navigator" output="screen">
+  <param name="folder" value="$(arg folder)" />
+  <param name="correct_odometry" type="bool" value="false" />
+  <param name="write_log" type="bool" value="true"/>
+</node>
+
+</launch>

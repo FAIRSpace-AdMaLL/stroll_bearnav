@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include <std_msgs/Float32.h>
+#include <std_msgs/String.h>
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/Twist.h>
 #include <geometry_msgs/PoseStamped.h>
@@ -49,6 +50,7 @@ ros::Publisher info_pub_;
 ros::Subscriber featureSub_;
 ros::Subscriber loadFeatureSub_;
 ros::Subscriber speedSub_;
+ros::Subscriber saverSub_;
 ros::Subscriber distSub_;
 ros::Subscriber distEventSub_;
 ros::Subscriber globalPoseSub_;
@@ -204,11 +206,11 @@ void loadFeatureCallback(const stroll_bearnav::FeatureArray::ConstPtr& msg)
 	}
 }
 
-void writeLog() {
+void writeLog(std_msgs::String msg) {
     /*save the path profile as well*/
     ROS_INFO("saving log...");
     char name[100];
-    sprintf(name,"%s/log_%f.yaml", folder.c_str(), ros::Time::now().toSec());
+    sprintf(name,"%s/log_%s.yaml", folder.c_str(), msg.data.c_str());
     ROS_INFO("saving test log to %s",name);
     FileStorage pfs(name,FileStorage::WRITE);
     write(pfs, "distance", log_distances);
@@ -623,11 +625,6 @@ void distanceCallback(const std_msgs::Float32::ConstPtr& msg)
 		twist.linear.x = twist.linear.y = twist.linear.z = 0.0;
 		twist.angular.z = twist.angular.y = twist.angular.x = 0.0;
 		cmd_pub_.publish(twist);
-
-        if(write_log) {
-            writeLog();
-            write_log = false;
-        }
 	}
 }
 
@@ -654,7 +651,8 @@ int main(int argc, char** argv)
     distEventSub_=nh.subscribe<std_msgs::Float32>("/distance_events",1,distanceEventCallback);
 	speedSub_=nh.subscribe<stroll_bearnav::PathProfile>("/pathProfile",1,pathCallback);
 
-    globalPoseSub_=nh.subscribe<geometry_msgs::PoseStamped>("/global_pose",1,globalPoseCallback); 
+    globalPoseSub_=nh.subscribe<geometry_msgs::PoseStamped>("/global_pose",1,globalPoseCallback);
+    saverSub_=nh.subscribe<std_msgs::String>("/log_saver",1,writeLog); 
   	/* Initiate action server */
 	server = new Server (nh, "navigator", boost::bind(&actionServerCB, _1, server), false);
 	server->start();
