@@ -5,10 +5,15 @@
 #include <stdio.h>
 #include <iostream>
 #include <cmath>
+#include <tf/tf.h>
+#include <cmath>
 #include <opencv2/opencv.hpp>
 #include <stroll_bearnav/FeatureArray.h>
 #include <stroll_bearnav/Feature.h>
 #include <std_msgs/Float32.h>
+#include <std_msgs/String.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Pose2D.h>
 #include <actionlib/server/simple_action_server.h>
 #include <stroll_bearnav/mapperAction.h>
 #include <geometry_msgs/Twist.h>
@@ -36,6 +41,8 @@ ros::Subscriber distSub_;
 ros::Subscriber infoSub_; 
 image_transport::Subscriber image_sub_;
 image_transport::Publisher image_pub_;
+ros::Subscriber saverSub_;
+ros::Subscriber globalPoseSub_;
 
 /* Service for set/reset distance */
 ros::ServiceClient client;
@@ -116,9 +123,56 @@ int lastMapChanges=-1;
 bool isPlastic=false;
 bool isUpdated=false;
 
+/*Testing Log*/
+bool write_log=true;
+std::vector<float> log_distances;
+geometry_msgs::Pose2D curr_pose;
+std::vector<float> log_global_pose;
+
 
 void distanceEventCallback(const std_msgs::Float32::ConstPtr& msg);
 void featureCallback(const stroll_bearnav::FeatureArray::ConstPtr& msg);
+
+
+void writeLog(std_msgs::String msg) {
+    /*save the path profile as well*/
+    ROS_INFO("saving log...");
+    char name[100];
+    sprintf(name,"%s/log_%s.yaml", folder.c_str(), msg.data.c_str());
+    ROS_INFO("saving test log to %s",name);
+    FileStorage pfs(name,FileStorage::WRITE);
+    write(pfs, "distance", log_distances);
+    write(pfs, "global_pose", log_global_pose);
+    pfs.release();
+    ROS_INFO("done!");
+}
+
+/*get Global pose*/
+void globalPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) 
+{
+    tf::Quaternion qua(
+        msg->pose.orientation.x,
+        msg->pose.orientation.y,
+        msg->pose.orientation.z,
+        msg->pose.orientation.w);
+    tf::Matrix3x3 mat(qua);
+    double roll, pitch, yaw;
+    mat.getRPY(roll, pitch, yaw);
+    
+    curr_pose.x = msg->pose.position.x;
+    curr_pose.y = msg->pose.position.y;
+    curr_pose.theta = yaw;
+
+	//Output the log
+	if(write_log) {
+		log_distances.push_back(distanceTravelled);
+		log_global_pose.push_back(curr_pose.x);
+		log_global_pose.push_back(curr_pose.y);
+		log_global_pose.push_back(curr_pose.theta);
+		ROS_INFO("curr pose: %f, %f, %f",  curr_pose.x, curr_pose.y, curr_pose.theta); 
+	}
+
+}
 
 /* select an appropriate image according to feature array ID*/ 
 void imageSelect(const char *id)
@@ -233,6 +287,11 @@ void executeCB(const stroll_bearnav::mapperGoalConstPtr &goal, Server *serv)
 			write(pfs, "forward_vel", path_forward_vel);
 			write(pfs, "angular_vel", path_angular_vel);
 			write(pfs, "flip_vel", path_flip_vel);
+
+			if(write_log){
+				write(pfs, "teach_distance", log_distances);
+    			write(pfs, "teach_global_pose", log_global_pose);
+			}
 
 			pfs.release();
 			if (server->isPreemptRequested()) server->setPreempted(result); else  server->setSucceeded(result);
@@ -403,6 +462,9 @@ int main(int argc, char** argv)
 	distSub_=nh.subscribe<std_msgs::Float32>("/distance",1,distanceCallback);
 	cmd_pub_ = nh.advertise<geometry_msgs::Twist>("/cmd",1);
 	ROS_INFO( "Map folder is: %s", folder.c_str());
+
+	// log saver
+	globalPoseSub_=nh.subscribe<geometry_msgs::PoseStamped>("/global_pose",1,globalPoseCallback); 
 
 	/* Initiate action server */
 	server = new Server (nh, "/mapper", boost::bind(&executeCB, _1, server), false);

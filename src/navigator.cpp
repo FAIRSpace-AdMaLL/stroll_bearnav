@@ -704,7 +704,7 @@ int main(int argc, char** argv)
 	distSub_=nh.subscribe<std_msgs::Float32>("/distance",1,distanceCallback);
     distEventSub_=nh.subscribe<std_msgs::Float32>("/distance_events",1,distanceEventCallback);
 	speedSub_=nh.subscribe<stroll_bearnav::PathProfile>("/pathProfile",1,pathCallback);
-	saverSub_=nh.subscribe<std_msgs::String>("log_saver",1,writeLog);
+	saverSub_=nh.subscribe<std_msgs::String>("log_saver_repeat",1,writeLog);
 
 	globalPoseSub_=nh.subscribe<geometry_msgs::PoseStamped>("/global_pose",1,globalPoseCallback); 
   	/* Initiate action server */

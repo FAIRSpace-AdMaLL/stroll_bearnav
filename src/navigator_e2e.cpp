@@ -652,7 +652,7 @@ int main(int argc, char** argv)
 	speedSub_=nh.subscribe<stroll_bearnav::PathProfile>("/pathProfile",1,pathCallback);
 
     globalPoseSub_=nh.subscribe<geometry_msgs::PoseStamped>("/global_pose",1,globalPoseCallback);
-    saverSub_=nh.subscribe<std_msgs::String>("/log_saver",1,writeLog); 
+    saverSub_=nh.subscribe<std_msgs::String>("/log_saver_repeat",1,writeLog); 
   	/* Initiate action server */
 	server = new Server (nh, "navigator", boost::bind(&actionServerCB, _1, server), false);
 	server->start();
