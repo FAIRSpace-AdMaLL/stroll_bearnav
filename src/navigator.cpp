@@ -103,7 +103,7 @@ std::vector<float> log_distances;
 std::vector<float> log_offsets;
 std::vector<int> log_num_inliners;
 geometry_msgs::Pose2D curr_pose;
-std::vector<float> log_global_pose;
+std::vector<double> log_global_pose;
  
 typedef struct
 {
@@ -511,6 +511,8 @@ void featureCallback(const stroll_bearnav::FeatureArray::ConstPtr& msg)
 		    log_distances.push_back(currentDistance);
 		    log_offsets.push_back(differenceRot);
 		    log_num_inliners.push_back(num_inliners);
+		    ros::Time now = ros::Time::now();
+		    log_global_pose.push_back(double(now.sec) + double(now.nsec*1e-9));
 		    log_global_pose.push_back(curr_pose.x);
 		    log_global_pose.push_back(curr_pose.y);
 		    log_global_pose.push_back(curr_pose.theta);

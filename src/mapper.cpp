@@ -127,7 +127,7 @@ bool isUpdated=false;
 bool write_log=true;
 std::vector<float> log_distances;
 geometry_msgs::Pose2D curr_pose;
-std::vector<float> log_global_pose;
+std::vector<double> log_global_pose;
 
 
 void distanceEventCallback(const std_msgs::Float32::ConstPtr& msg);
@@ -166,6 +166,8 @@ void globalPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg)
 	//Output the log
 	if(write_log) {
 		log_distances.push_back(distanceTravelled);
+		ros::Time now = ros::Time::now();
+		log_global_pose.push_back(double(now.sec) + double(now.nsec*1e-9));
 		log_global_pose.push_back(curr_pose.x);
 		log_global_pose.push_back(curr_pose.y);
 		log_global_pose.push_back(curr_pose.theta);
