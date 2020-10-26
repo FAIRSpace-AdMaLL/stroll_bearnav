@@ -411,12 +411,18 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         /* odometry correction */
         if(correct_odometry) {
             double deltaZ = keypoint_srv.response.translation[2];
-            if(abs(deltaZ)<0.02)    odometry_offset=0;
-            else    odometry_offset = 0.9*odometry_offset+0.1*fmax(fmin(deltaZ, 0.2), -0.2);
+            if(abs(deltaZ)<0.02 || abs(path[currentPathElement].angular*velocityGain)>1.0 || currentDistance>50){ //currentDistance>5, abs(path[currentPathElement].angular*velocityGain)>2.0
+                odometry_offset=0;
+                ROS_ERROR("Turn off odometry correction. currentDistance: %f, vel: %f", currentDistance, path[currentPathElement].angular*velocityGain);
+            }
+            else {   
+                odometry_offset = 0.9*odometry_offset+0.1*fmax(fmin(deltaZ, 0.1), -0.1);
+                ROS_WARN("Turn on odometry correction.");
 
-            setdist_srv.request.distance=fmax(0.0, currentDistance + odometry_offset);
-            if (!client.call(setdist_srv)) ROS_ERROR("Failed to call service SetDistance provided by odometry_monitor node!");
-            else ROS_WARN("Correcting odometry now - %6f!", odometry_offset);
+                setdist_srv.request.distance=fmax(0.0, currentDistance + odometry_offset);
+                if (!client.call(setdist_srv)) ROS_ERROR("Failed to call service SetDistance provided by odometry_monitor node!");
+                else ROS_WARN("Correcting odometry now - %6f!", odometry_offset);
+            }
         }
         /* publish statistics */
         feedback.correct = num_inliners;
