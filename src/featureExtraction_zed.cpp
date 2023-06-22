@@ -16,16 +16,9 @@
 #include <dynamic_reconfigure/server.h>
 #include <stroll_bearnav/featureExtractionConfig.h>
 #include <std_msgs/Int32.h>
-#include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>
-#include <sensor_msgs/Image.h>
-#include <chrono>
-#include <nn_matcher/NNImageSelect.h>
 using namespace cv;
 using namespace cv::xfeatures2d;
 using namespace std;
-using namespace sensor_msgs;
-using namespace message_filters;
 static const std::string OPENCV_WINDOW = "Image window";
 
 typedef enum
@@ -47,29 +40,14 @@ typedef enum
 image_transport::Subscriber image_sub_;
 image_transport::Publisher image_pub_;
 stroll_bearnav::FeatureArray featureArray;
-stroll_bearnav::FeatureArray featureArray1;
 stroll_bearnav::Feature feature;
-stroll_bearnav::Feature feature1;
 ros::Publisher feat_pub_;
-ros::ServiceClient client;
-ros::Subscriber state_index_sub;
 
 /* image feature parameters */
 float detectionThreshold = 0;
-vector<KeyPoint> keypoints;
-vector<KeyPoint> keypoints1; 
+vector<KeyPoint> keypoints; 
 Mat descriptors;
-Mat descriptors1;
-Mat img,img2,img3;
-Mat img1,img_selected;
-Mat image_camera;
-int select_num = 0;
-int kp_num = 0;
-int stateIndex = 1;
-float msgId;
-float msgId_selected;
-
-Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create("BruteForce-Hamming");
+Mat img;
 
 /*kokoti hlava, co delala OCV3, me donutila delat to uplne debilne*/
 Ptr<AgastFeatureDetector> agastDetector = AgastFeatureDetector::create(detectionThreshold);
@@ -84,7 +62,6 @@ NormTypes featureNorm = NORM_INF;
 /* optimization parameters */
 bool optimized = false;
 clock_t t;
-clock_t t1;
 
 /* adaptive threshold parameters */
 bool adaptThreshold = true;
@@ -93,9 +70,6 @@ float featureOvershootRatio = 0.3;
 float maxLine = 0.5;
 int target_over;
 void adaptive_threshold(vector<KeyPoint>& keypoints);
-Point2f pixel2cam(const Point2d &p, const Mat &K);
-
-
 
 int detectKeyPoints(Mat &image,vector<KeyPoint> &keypoints)
 {
@@ -162,18 +136,10 @@ bool compare_response(KeyPoint first, KeyPoint second)
 /* Extract features from image recieved from camera */
 void imageCallback(const sensor_msgs::ImageConstPtr& msg)
 {
-	if (stateIndex == 0){
-		return;
-	}
-	select_num = select_num +1;
-    ROS_INFO("Time taken: %.4fs", (float)(clock())/CLOCKS_PER_SEC);
 	cv_bridge::CvImagePtr cv_ptr;
-	cv_bridge::CvImagePtr cv_ptr1;
 	try
 	{
 		cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
-		// cv_ptr1 = cv_bridge::toCvCopy(msg1, sensor_msgs::image_encodings::BGR8);
-		
 	}
 	catch (cv_bridge::Exception& e)
 	{
@@ -181,120 +147,71 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
 		return;
 	}
 	img=cv_ptr->image;
-	msgId = msg->header.seq;
 
-	nn_matcher::NNImageSelect srv;
-	//cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
+	/* Detect image features */
+	t = clock();
+	if(optimized && adaptThreshold){
 
-    cvtColor(cv_ptr->image, image_camera, cv::COLOR_BGR2GRAY);
+		/* firstly only detect keypoints */
+		detectKeyPoints(img,keypoints);
+		sort(keypoints.begin(),keypoints.end(),compare_response);
+		/* determine the next threshold */
+		adaptive_threshold(keypoints);
 	
-    srv.request.image_camera = *(cv_bridge::CvImage(std_msgs::Header(), "mono8", image_camera).toImageMsg());
-    if (client.call(srv))
-    {
-        //ROS_INFO("Flag is: %ld", (long int)srv.response.flag);
-    }
-    else
-    {
-        ROS_ERROR("Failed to call service to match two images.");
-        return;
-    }
-	//kp_num = srv.response.kpNum;
-	/* select map images with more features */
-    if (srv.response.kpNum >= kp_num){
-        img_selected = img;
-		msgId_selected = msgId;
-		kp_num = srv.response.kpNum;
+		/* reduce keypoints size to desired number of keypoints */
+		keypoints.erase(keypoints.begin()+ min(targetKeypoints,(int)keypoints.size()),keypoints.end());
 
-    }
-	if (select_num >=5 || srv.response.kpNum >100) 
-	{
+		/* then compute descriptors only for desired number of keypoints */
+		describeKeyPoints(img,keypoints,descriptors);
 
-		img = img_selected;
-		msgId = msgId_selected;
+	} else {
 
-		/* Detect image features */
-		chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-						
-		
-		t = clock();
-		if(optimized && adaptThreshold){
+		/* detect keypoints and compute descriptors for all keypoints*/
+		detectAndDescribe(img, keypoints,descriptors);
 
-			/* firstly only detect keypoints */
-			detectKeyPoints(img,keypoints);
+		if(adaptThreshold) adaptive_threshold(keypoints);
+		keypoints.erase(keypoints.begin()+ min(targetKeypoints,(int)keypoints.size()),keypoints.end());
 
-			sort(keypoints.begin(),keypoints.end(),compare_response);
-			sort(keypoints1.begin(),keypoints1.end(),compare_response);
-			/* determine the next threshold */
-			adaptive_threshold(keypoints);
-		
-			/* reduce keypoints size to desired number of keypoints */
-			keypoints.erase(keypoints.begin()+ min(targetKeypoints,(int)keypoints.size()),keypoints.end());
+	}
+	ROS_DEBUG("Time taken: %.4fs", (float)(clock() - t)/CLOCKS_PER_SEC);
 
-			/* then compute descriptors only for desired number of keypoints */
-			describeKeyPoints(img,keypoints,descriptors);
-
+	/* publish image features */
+	featureArray.feature.clear();
+	for(int i=0;i<keypoints.size();i++){
+		feature.x=keypoints[i].pt.x;
+		feature.y=keypoints[i].pt.y;
+		feature.size=keypoints[i].size;
+		feature.angle=keypoints[i].angle;
+		feature.response=keypoints[i].response;
+		feature.octave=keypoints[i].octave;
+		feature.class_id=featureNorm;
+		descriptors.row(i).copyTo(feature.descriptor);
+		if(adaptThreshold) {
+			if(i < targetKeypoints) featureArray.feature.push_back(feature);
 		} else {
-
-			/* detect keypoints and compute descriptors for all keypoints*/
-			detectAndDescribe(img, keypoints,descriptors);
-
-			if(adaptThreshold) adaptive_threshold(keypoints);
-			keypoints.erase(keypoints.begin()+ min(targetKeypoints,(int)keypoints.size()),keypoints.end());
-
+			featureArray.feature.push_back(feature);
 		}
-		chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
-		chrono::duration<double> time_used = chrono::duration_cast<chrono::duration<double>>(t2 - t1);
-		ROS_INFO("Time taken: %.4fs", (float)(clock() - t)/CLOCKS_PER_SEC);	
-		cout << "match ORB cost = " << time_used.count() << " seconds. " << endl;
 
-		/* publish image features */
-		featureArray.feature.clear();
-		for(int i=0;i<keypoints.size();i++){
-			feature.x=keypoints[i].pt.x;
-			feature.y=keypoints[i].pt.y;
-			feature.size=keypoints[i].size;
-			feature.angle=keypoints[i].angle;
-			feature.response=keypoints[i].response;
-			feature.octave=keypoints[i].octave;
-			feature.class_id=featureNorm;
-			descriptors.row(i).copyTo(feature.descriptor);
-			if(adaptThreshold) {
-				if(i < targetKeypoints) featureArray.feature.push_back(feature);
-			} else {
-				featureArray.feature.push_back(feature);
-			}
+	}
+	char numStr[100];
+	sprintf(numStr,"Image_%09d",msg->header.seq);
+	featureArray.id =  numStr;
 
-		}
-		char numStr[100];
-		sprintf(numStr,"Image_%09d",(int)msgId);
-		featureArray.id =  numStr;
+	featureArray.distance = msg->header.seq;
+	printf("Features: %i\n",(int)featureArray.feature.size());
+	feat_pub_.publish(featureArray);
 
-		featureArray.distance = msgId;
-		printf("Features: %i\n",(int)featureArray.feature.size());
-		feat_pub_.publish(featureArray);
+	/*and if there are any consumers, publish image with features*/
+	if (image_pub_.getNumSubscribers()>0)
+	{
+		/* Show all detected features in image (Red)*/
+		drawKeypoints( img, keypoints, cv_ptr->image, Scalar(0,0,255), DrawMatchesFlags::DEFAULT );
 
-		/*and if there are any consumers, publish image with features*/
-		if (image_pub_.getNumSubscribers()>0)
-		{
-			/* Show all detected features in image (Red)*/
-			drawKeypoints( img, keypoints, cv_ptr->image, Scalar(0,0,255), DrawMatchesFlags::DEFAULT );
-
-			/* publish image with features */
-			image_pub_.publish(cv_ptr->toImageMsg());
-			ROS_INFO("Features extracted %ld %ld",featureArray.feature.size(),keypoints.size());
-		}
-		select_num = 0;
-		kp_num = 0;
+		/* publish image with features */
+		image_pub_.publish(cv_ptr->toImageMsg());
+		ROS_INFO("Features extracted %ld %ld",featureArray.feature.size(),keypoints.size());
 	}
 }
-Point2f pixel2cam(const Point2d &p, const Mat &K) {
-  return Point2f
-    (
-      (p.x - K.at<double>(0, 2)) / K.at<double>(0, 0),
-      (p.y - K.at<double>(1, 2)) / K.at<double>(1, 1)
-    );
-}
-
 
 /* adaptive threshold - trying to target a given number of keypoints */
 void adaptive_threshold(vector<KeyPoint>& keypoints)
@@ -332,13 +249,6 @@ void keypointCallback(const std_msgs::Int32::ConstPtr& msg)
     ROS_INFO("targetKeypoints set to %i, overshoot: %i",targetKeypoints,target_over);
 
 }
-void state_index_Callback(const std_msgs::Int32::ConstPtr& msg)
-{
-
-	stateIndex = msg->data;
-	//cout << "image_index " << image_index << endl;
-
-}
 
 int main(int argc, char** argv)
 { 
@@ -351,18 +261,11 @@ int main(int argc, char** argv)
 	dynamic_reconfigure::Server<stroll_bearnav::featureExtractionConfig>::CallbackType f = boost::bind(&callback, _1, _2);
 	server.setCallback(f);
 
-
 	feat_pub_ = nh_.advertise<stroll_bearnav::FeatureArray>("/features",1);
-	client = nh_.serviceClient<nn_matcher::NNImageSelect>("NN_Image_Select");
-
-	image_sub_ = it_.subscribe( "/image_stereo", 1,imageCallback);
+	image_sub_ = it_.subscribe( "/image", 1,imageCallback);
 	ros::Subscriber key_sub = nh_.subscribe("/targetKeypoints", 1, keypointCallback);
 	image_pub_ = it_.advertise("/image_with_features", 1);
-	state_index_sub=nh_.subscribe<std_msgs::Int32>("/stateIndex",1,state_index_Callback);
-    // message_filters::Subscriber<Image> image_sub(nh_, "/image", 1);
-    // message_filters::Subscriber<Image> imagel_sub(nh_, "/imager", 1);
-    // TimeSynchronizer<Image, Image> sync(image_sub, imagel_sub, 10);
-    // sync.registerCallback(boost::bind(&imageCallback, _1, _2));
+
 
 	ros::spin();
 	return 0;
